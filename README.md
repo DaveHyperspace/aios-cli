@@ -8,7 +8,7 @@ The CLI has a lot of commands, but the basic idea is that it allows you to run y
 
 ## Installation
 
-To install on all platforms you can use our install script (located here in the repo or) available hosted on our download endpoint. These scripts will download the latest release, install any required GPU drivers, and move the binary to somewhere in  your `PATH` so that you can access `aios-cli` globally.
+To install on all platforms you can use our install script (located here in the repo or) available hosted on our download endpoint. These scripts will download the latest release, install any required GPU drivers, and move the binary to somewhere in  your `PATH` so that you can access `aios-cli` globally. You can learn more about how the script works [here](/scripts/README.md).
 
 ### Linux
 
