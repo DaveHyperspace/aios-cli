@@ -15,19 +15,22 @@ While the script is the recommended way to install, you can also download the bi
 ### Linux
 
 ```shell
-curl https://download.aios.network/api/install | sh
+curl https://download.hyper.space/api/install | bash
 ```
 
 ### Mac
 
 ```shell
-curl https://download.aios.network/api/install | sh
+curl https://download.hyper.space/api/install | sh
 ```
 
 ### Windows
 
 ```shell
-curl https://download.aios.network/api/install?platform=windows | powershell.exe
+# If you have a real version of `curl` (i.e. something that returns a valid version when you do `curl --version`)
+curl https://download.hyper.space/api/install?platform=windows | powershell -
+# Otherwise
+(Invoke-WebRequest "https://download.hyper.space/install?platform=windows").Content | powershell -
 ```
 
 
