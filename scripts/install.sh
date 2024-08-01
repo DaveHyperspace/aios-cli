@@ -1,249 +1,413 @@
+#!/bin/bash
+
+set -e
+
+trap 'echo_and_log "ERROR" "Script exited unexpectedly on line $LINENO. Last command: $BASH_COMMAND"' ERR
+
 # Repository and version information
-$REPO_OWNER = "DaveHyperspace"
-$REPO_SLUG = "aios-cli"
-$CUDA_VERSION = "12.5.1"
-$CUDA_PACKAGE_VERSION = "12-5"
-$CUDA_PATH_VERSION = "12.5"
+REPO_OWNER="DaveHyperspace"
+REPO_SLUG="aios-cli"
+CUDA_VERSION="12.5.1"
+CUDA_PACKAGE_VERSION="12-5"
+CUDA_PATH_VERSION="12.5"
 
-$LOG_FILE = "$env:TEMP\hyperspace_install.log"
-$VERBOSE = $false
+LOG_FILE="/tmp/hyperspace_install.log"
+VERBOSE=false
 
-function Log {
-    param (
-        [string]$level,
-        [string]$message
-    )
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    "$timestamp [$level] $message" | Out-File -Append -FilePath $LOG_FILE
-    if ($VERBOSE -or $level -eq "ERROR") {
-        Write-Host "[$level] $message"
-    }
+log() {
+    local level="$1"
+    local message="$2"
+    local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+    echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
+    if [ "$VERBOSE" = true ] || [ "$level" = "ERROR" ]; then
+        echo "[$level] $message"
+    fi
 }
 
-function Echo-And-Log {
-    param (
-        [string]$level,
-        [string]$message
-    )
-    Write-Host $message
-    Log $level $message
+echo_and_log() {
+    local level="$1"
+    local message="$2"
+    echo "$message"
+    log "$level" "$message"
 }
 
 # Parse command line arguments
-$args | ForEach-Object {
-    switch ($_) {
-        {$_ -in "-v", "--verbose"} { $VERBOSE = $true }
-    }
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        -v|--verbose) VERBOSE=true; shift ;;
+        *) shift ;;
+    esac
+done
+
+# Detect the operating system
+detect_os() {
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "macos"
+    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        echo "linux"
+    else
+        echo "unknown"
+    fi
 }
 
-function Detect-WindowsVersion {
-    $osInfo = Get-CimInstance -ClassName Win32_OperatingSystem
-    if ($osInfo.Caption -like "*Server 2022*") {
-        return "Server2022"
-    } elseif ([System.Environment]::OSVersion.Version.Major -eq 10) {
-        if ([System.Environment]::OSVersion.Version.Build -ge 22000) {
-            return "Windows11"
-        } else {
-            return "Windows10"
-        }
-    } else {
-        return "Unknown"
-    }
+# Detect Mac architecture (silicon or intel)
+detect_mac_arch() {
+    if [[ $(uname -m) == "arm64" ]]; then
+        echo "silicon"
+    else
+        echo "intel"
+    fi
 }
 
-function Check-NvidiaGPU {
-    $gpu = Get-WmiObject Win32_VideoController | Where-Object { $_.Name -like "*NVIDIA*" }
-    return $null -ne $gpu
+# Check for NVIDIA GPU presence
+
+check_nvidia_gpu() {
+    if is_wsl; then
+        if command -v nvidia-smi &> /dev/null; then
+            nvidia-smi &> /dev/null
+            return $?
+        else
+            return 1
+        fi
+    else
+        lspci 2>/dev/null | grep -i nvidia &> /dev/null
+    fi
 }
 
-function Check-CUDA {
-    return Test-Path "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v$CUDA_PATH_VERSION"
+
+# Check if CUDA is installed
+check_cuda() {
+    command -v nvcc &> /dev/null
 }
 
-function Install-CUDA {
-    $windowsVersion = Detect-WindowsVersion
-    $cudaUrl = "https://developer.download.nvidia.com/compute/cuda/$CUDA_VERSION/local_installers/cuda_${CUDA_VERSION}_555.85_windows.exe"
+handle_cuda_wsl() {
+    log "INFO" "Checking CUDA support in WSL..."
+    if check_cuda; then
+        log "INFO" "CUDA is available in this WSL environment."
+        log "INFO" "Using CUDA from Windows host system."
+        return 0
+    else
+        log "WARN" "CUDA is not detected in this WSL environment."
+        log "INFO" "To use CUDA in WSL2, please ensure:"
+        log "INFO" "1. You have installed the NVIDIA CUDA on WSL driver on your Windows host."
+        log "INFO" "2. You are using WSL2 (not WSL1)."
+        log "INFO" "3. Your Windows host has CUDA-capable NVIDIA GPU and up-to-date drivers."
+        log "INFO" "For more information, visit: https://docs.nvidia.com/cuda/wsl-user-guide/index.html"
+        return 1
+    fi
+}
 
-    Echo-And-Log "INFO" "Downloading CUDA installer..."
-    $installerPath = "$env:TEMP\cuda_installer.exe"
-    Invoke-WebRequest -Uri $cudaUrl -OutFile $installerPath
 
-    Echo-And-Log "INFO" "Installing CUDA..."
-    Start-Process -FilePath $installerPath -ArgumentList "/s" -Wait
+# Install CUDA on supported Linux distributions
+install_cuda() {
+    echo_and_log "INFO" "Installing CUDA $CUDA_VERSION..."
+
+    if [ ! -f /etc/os-release ]; then
+        echo "Error: Cannot determine OS version. Aborting CUDA installation."
+        return 1
+    fi
+
+    . /etc/os-release
+    OS=$ID
+    VER=$VERSION_ID
+
+    # Temporary file to store downloaded .deb
+    local temp_deb="cuda_installer.deb"
+
+
+    case $OS in
+        "ubuntu"|"pop")
+            case $VER in
+                "20.04"|"22.04"|"24.04")
+                    wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu${VER/./}/x86_64/cuda-ubuntu${VER/./}.pin
+                    sudo mv cuda-ubuntu${VER/./}.pin /etc/apt/preferences.d/cuda-repository-pin-600
+                    wget -O "$temp_deb" https://developer.download.nvidia.com/compute/cuda/${CUDA_VERSION}/local_installers/cuda-repo-ubuntu${VER/./}-${CUDA_PACKAGE_VERSION}-local_${CUDA_VERSION}-555.42.06-1_amd64.deb
+                    sudo dpkg -i "$temp_deb"
+                    sudo cp /var/cuda-repo-ubuntu${VER/./}-${CUDA_PACKAGE_VERSION}-local/cuda-*-keyring.gpg /usr/share/keyrings/
+                    ;;
+                *)
+                    echo "Error: Unsupported Ubuntu version. Aborting CUDA installation."
+                    return 1
+                    ;;
+            esac
+            ;;
+        "debian")
+            wget -O "$temp_deb" https://developer.download.nvidia.com/compute/cuda/${CUDA_VERSION}/local_installers/cuda-repo-debian12-${CUDA_PACKAGE_VERSION}-local_${CUDA_VERSION}-555.42.06-1_amd64.deb
+            sudo dpkg -i "$temp_deb"
+            sudo cp /var/cuda-repo-debian12-${CUDA_PACKAGE_VERSION}-local/cuda-*-keyring.gpg /usr/share/keyrings/
+            sudo add-apt-repository contrib
+            ;;
+        *)
+            echo "Error: Unsupported OS for automatic CUDA installation. Please install CUDA manually."
+            return 1
+            ;;
+    esac
+
+    sudo apt-get update || { log "Error: Failed to update package lists."; rm "$temp_deb"; return 1; }
+    sudo apt-get -y install cuda-toolkit-${CUDA_PACKAGE_VERSION} || { log "Error: Failed to install CUDA toolkit."; rm "$temp_deb"; return 1; }
 
     # Clean up
-    Remove-Item $installerPath
+    rm "$temp_deb"
 
-    Echo-And-Log "INFO" "CUDA $CUDA_VERSION installation complete."
 
-    if (-not (Check-CUDA)) {
-        Echo-And-Log "ERROR" "CUDA installation validation failed. Please check your installation."
-        return $false
-    }
+    # Perform post-installation actions
+    echo "Performing post-installation actions..."
 
-    # Set up environment variables
-    $cudaPath = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v$CUDA_PATH_VERSION"
-    $env:PATH += ";$cudaPath\bin"
-    $env:PATH += ";$cudaPath\libnvvp"
-    [System.Environment]::SetEnvironmentVariable("PATH", $env:PATH, [System.EnvironmentVariableTarget]::Machine)
+    # Create cuda.sh in /etc/profile.d/ to set up the environment for all users
+    sudo tee /etc/profile.d/cuda.sh > /dev/null <<EOT
+export PATH=/usr/local/cuda-${CUDA_PATH_VERSION}/bin\${PATH:+:\${PATH}}
+export LD_LIBRARY_PATH=/usr/local/cuda-${CUDA_PATH_VERSION}/lib64\${LD_LIBRARY_PATH:+:\${LD_LIBRARY_PATH}}
+EOT
 
-    return $true
+    # Make cuda.sh executable
+    sudo chmod +x /etc/profile.d/cuda.sh
+
+    # Source cuda.sh in the current session
+    source /etc/profile.d/cuda.sh
+
+    echo "CUDA $CUDA_PATH_VERSION installation and environment setup complete."
+
+    # Validate CUDA installation
+    if ! check_cuda; then
+        echo "Error: CUDA installation validation failed. Please check your installation and PATH."
+        return 1
+    fi
+
+    echo_and_log "DEBUG" "CUDA installation function completed successfully."
+    return 0
 }
 
-function Fetch-LatestRelease {
-    $url = "https://api.github.com/repos/$REPO_OWNER/$REPO_SLUG/releases/latest"
-    $response = Invoke-RestMethod -Uri $url
-    return $response
+# Fetch the latest release information from GitHub
+fetch_latest_release() {
+    curl -s "https://api.github.com/repos/$REPO_OWNER/$REPO_SLUG/releases/latest"
 }
 
-function Get-DownloadUrl {
-    param (
-        [bool]$hasCuda
-    )
-    if ($hasCuda) {
-        return "https://github.com/$REPO_OWNER/$REPO_SLUG/releases/latest/download/aios-cli-x86_64-pc-windows-msvc-cuda.zip"
-    } else {
-        return "https://github.com/$REPO_OWNER/$REPO_SLUG/releases/latest/download/aios-cli-x86_64-pc-windows-msvc.zip"
-    }
+# Get the download URL for the appropriate asset
+get_download_url() {
+    local os=$1
+    local arch=$2
+
+    echo "$arch" >&2
+
+    local url=""
+    case $os in
+        macos)
+            if [ "$arch" == "silicon" ]; then
+                url="https://github.com/$REPO_OWNER/$REPO_SLUG/releases/latest/download/aios-cli-aarch64-apple-darwin.tar.gz"
+            else
+                url="https://github.com/$REPO_OWNER/$REPO_SLUG/releases/latest/download/aios-cli-x86_64-apple-darwin.tar.gz"
+            fi
+            ;;
+        linux|ubuntu|debian|pop)
+            if [ "$arch" == "cuda" ]; then
+                url="https://github.com/$REPO_OWNER/$REPO_SLUG/releases/latest/download/aios-cli-x86_64-unknown-linux-gnu-cuda.tar.gz"
+            else
+                url="https://github.com/$REPO_OWNER/$REPO_SLUG/releases/latest/download/aios-cli-x86_64-unknown-linux-gnu.tar.gz"
+            fi
+            ;;
+        *)
+            echo_and_log "ERROR" "Unsupported OS: $os" >&2
+            return 1
+            ;;
+    esac
+
+    if [ -n "$url" ]; then
+        echo_and_log "DEBUG" "Download URL determined: $url" >&2
+        echo "$url"
+        return 0
+    else
+        echo_and_log "ERROR" "Failed to determine download URL for OS: $os, ARCH: $arch" >&2
+        return 1
+    fi
 }
 
-function Download-WithRetry {
-    param (
-        [string]$url,
-        [string]$output
-    )
-    $maxAttempts = 3
-    $attempt = 1
+# Download file with retry mechanism
+download_with_retry() {
+    local url="$1"
+    local output="$2"
+    local max_attempts=3
+    local attempt=1
 
-    while ($attempt -le $maxAttempts) {
-        try {
-            Invoke-WebRequest -Uri $url -OutFile $output
-            Echo-And-Log "INFO" "Download successful: $output"
-            return $true
-        } catch {
-            Echo-And-Log "WARN" "Attempt $attempt failed. Retrying in 5 seconds..."
-            Start-Sleep -Seconds 5
-            $attempt++
-        }
-    }
+    echo_and_log "INFO" "Downloading $url to $output..."
+    trap 'echo_and_log "ERROR" "Download interrupted. Cleaning up..."; rm -f "$output"; exit 1' INT TERM
 
-    Echo-And-Log "ERROR" "Failed to download after $maxAttempts attempts."
-    return $false
+    while [ $attempt -le $max_attempts ]; do
+        if curl -L --fail -o "$output" "$url"; then
+            echo_and_log "INFO" "Download successful: $output"
+            trap - INT TERM
+            return 0
+        else
+            echo_and_log "WARN" "Attempt $attempt failed. Retrying in 5 seconds..."
+            sleep 5
+            attempt=$((attempt + 1))
+        fi
+    done
+
+    echo_and_log "ERROR" "Failed to download after $max_attempts attempts."
+    rm -f "$output"
+    trap - INT TERM
+    return 1
 }
 
-function Install-Binary {
-    param (
-        [string]$filename
-    )
-    $installDir = "$env:ProgramFiles\AIOS"
+install_binary() {
+    local filename=$1
+    local install_dir="/usr/local/bin"
 
-    Echo-And-Log "INFO" "Extracting $filename..."
-    Expand-Archive -Path $filename -DestinationPath $env:TEMP\aios-temp
+    echo_and_log "INFO" "Extracting $filename..."
+    tar -xzf "$filename"
 
-    $binaryName = "aios-cli.exe"
-    $binaryPath = Get-ChildItem -Path $env:TEMP\aios-temp -Recurse -Filter $binaryName | Select-Object -First 1 -ExpandProperty FullName
+    local binary_name="aios-cli"
+    local binary_path=$(find . -name "$binary_name" -type f)
+    if [ -z "$binary_path" ]; then
+        echo_and_log "ERROR" "Binary not found in the extracted files."
+        return 1
+    fi
 
-    if (-not $binaryPath) {
-        Echo-And-Log "ERROR" "Binary not found in the extracted files."
-        return $false
-    }
-
-    Echo-And-Log "INFO" "Moving binary to $installDir"
-    if (-not (Test-Path $installDir)) {
-        New-Item -ItemType Directory -Path $installDir | Out-Null
-    }
-    Move-Item $binaryPath $installDir
-
-    # Add to PATH
-    $userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
-    if ($userPath -notlike "*$installDir*") {
-        [Environment]::SetEnvironmentVariable("PATH", "$userPath;$installDir", "User")
-    }
+    echo_and_log "INFO" "Moving binary to $install_dir"
+    if sudo mv "$binary_path" "$install_dir/$binary_name"; then
+        echo_and_log "INFO" "Binary installed successfully. You can now run it by typing '$binary_name'."
+    else
+        echo_and_log "ERROR" "Failed to move the binary to $install_dir. Please check your permissions."
+        return 1
+    fi
 
     # Clean up
-    Remove-Item $filename
-    Remove-Item $env:TEMP\aios-temp -Recurse
+    rm -f "$filename"
 
     # Validate installation
-    if (-not (Get-Command aios-cli -ErrorAction SilentlyContinue)) {
-        Echo-And-Log "ERROR" "Installation validation failed. The 'aios-cli' command is not available in PATH."
-        return $false
-    }
+    if ! command -v "$binary_name" &> /dev/null; then
+        echo_and_log "ERROR" "Installation validation failed. The '$binary_name' command is not available in PATH."
+        return 1
+    fi
 
-    return $true
+    return 0
 }
 
-function Main {
-    Echo-And-Log "INFO" "Starting AIOS CLI installation..."
+is_wsl() {
+    if grep -qi microsoft /proc/version; then
+        return 0
+    else
+        return 1
+    fi
+}
 
-    $windowsVersion = Detect-WindowsVersion
-    Echo-And-Log "INFO" "Detected Windows version: $windowsVersion"
+# Main function to orchestrate the installation process
+main() {
+    echo_and_log "INFO" "Starting AIOS CLI installation..."
 
-    if ($windowsVersion -eq "Unknown") {
-        Echo-And-Log "ERROR" "Unsupported Windows version."
+    local OS ARCH RELEASE_DATA VERSION DOWNLOAD_URL FILENAME
+
+    OS=$(detect_os)
+    echo_and_log "INFO" "Detected OS: $OS"
+
+    if [ "$OS" == "unknown" ]; then
+        echo_and_log "ERROR" "Unsupported operating system."
         exit 1
-    }
+    fi
 
-    Echo-And-Log "INFO" "Fetching latest release..."
-    $releaseData = Fetch-LatestRelease
-    if (-not $releaseData) {
-        Echo-And-Log "ERROR" "Failed to fetch release data."
+    if is_wsl; then
+        echo_and_log "WARN" "Running in WSL environment. Some features may be limited."
+        echo_and_log "WARN" "CUDA installation may not work as expected in WSL."
+    fi
+
+    echo_and_log "INFO" "Fetching latest release..."
+    RELEASE_DATA=$(fetch_latest_release)
+    if [ -z "$RELEASE_DATA" ]; then
+        echo_and_log "ERROR" "Failed to fetch release data."
         exit 1
-    }
+    fi
 
-    $version = $releaseData.tag_name
-    Echo-And-Log "INFO" "Latest version: $version"
-
-    $hasCuda = $false
-    if (Check-NvidiaGPU) {
-        Echo-And-Log "INFO" "NVIDIA GPU detected."
-        if (-not (Check-CUDA)) {
-            Echo-And-Log "INFO" "CUDA is not installed."
-            $installCuda = Read-Host "Do you want to install CUDA drivers? (y/n)"
-            if ($installCuda -eq "y") {
-                if (Install-CUDA) {
-                    Echo-And-Log "INFO" "CUDA installation completed successfully."
-                    $hasCuda = $true
-                } else {
-                    Echo-And-Log "ERROR" "CUDA installation failed."
-                    Echo-And-Log "INFO" "Proceeding with non-CUDA version."
-                }
-            } else {
-                Echo-And-Log "INFO" "Proceeding without CUDA."
-            }
-        } else {
-            Echo-And-Log "INFO" "CUDA is already installed."
-            $hasCuda = $true
-        }
-    } else {
-        Echo-And-Log "INFO" "No NVIDIA GPU detected. Proceeding without CUDA."
-    }
-
-    $downloadUrl = Get-DownloadUrl -hasCuda $hasCuda
-    if (-not $downloadUrl) {
-        Echo-And-Log "ERROR" "Failed to determine appropriate download URL."
+    VERSION=$(echo "$RELEASE_DATA" | grep -o '"tag_name": *"[^"]*"' | sed -E 's/"tag_name": "(.*)"/\1/')
+    if [ -z "$VERSION" ]; then
+        echo_and_log "ERROR" "Failed to parse version from release data."
         exit 1
-    }
+    fi
+    echo_and_log "INFO" "Latest version: $VERSION"
 
-    Echo-And-Log "INFO" "Download URL: $downloadUrl"
+    case $OS in
+        macos)
+            ARCH=$(detect_mac_arch)
+            echo_and_log "INFO" "Detected Mac architecture: $ARCH"
+            ;;
+        linux)
+            if is_wsl; then
+                echo_and_log "INFO" "WSL environment detected."
+                if check_nvidia_gpu; then
+                    echo_and_log "INFO" "NVIDIA GPU detected in WSL."
+                    if check_cuda; then
+                        echo_and_log "INFO" "CUDA is available in this WSL environment."
+                        ARCH="cuda"
+                    else
+                        echo_and_log "WARN" "CUDA is not detected in this WSL environment."
+                        echo_and_log "INFO" "Proceeding with non-CUDA version."
+                        ARCH="nocuda"
+                    fi
+                else
+                    echo_and_log "INFO" "No NVIDIA GPU detected in WSL. Proceeding with non-CUDA version."
+                    ARCH="nocuda"
+                fi
+            else
+                if check_nvidia_gpu; then
+                    echo_and_log "INFO" "NVIDIA GPU detected."
+                    if check_cuda; then
+                        echo_and_log "INFO" "CUDA is already installed."
+                        ARCH="cuda"
+                    else
+                        echo_and_log "INFO" "CUDA is not installed."
+                        read -p "Do you want to install CUDA drivers? (y/n) " -n 1 -r
+                        echo
+                        if [[ $REPLY =~ ^[Yy]$ ]]; then
+                            echo_and_log "INFO" "Starting CUDA installation"
+                            if install_cuda; then
+                                echo_and_log "INFO" "CUDA installation completed successfully."
+                                ARCH="cuda"
+                            else
+                                echo_and_log "ERROR" "CUDA installation failed."
+                                echo_and_log "INFO" "Proceeding with non-CUDA version."
+                                ARCH="nocuda"
+                            fi
+                        else
+                            echo_and_log "INFO" "User chose not to install CUDA. Proceeding with non-CUDA version."
+                            ARCH="nocuda"
+                        fi
+                    fi
+                else
+                    echo_and_log "INFO" "No NVIDIA GPU detected. Proceeding with non-CUDA version."
+                    ARCH="nocuda"
+                fi
+            fi
+            ;;
+        *)
+            echo_and_log "ERROR" "Unsupported operating system: $OS"
+            exit 1
+            ;;
+    esac
 
-    $filename = Split-Path -Leaf $downloadUrl
-    Echo-And-Log "INFO" "Downloading $filename..."
-
-    if (-not (Download-WithRetry $downloadUrl "$env:TEMP\$filename")) {
-        Echo-And-Log "ERROR" "Download failed. Please check your internet connection and try again."
+    DOWNLOAD_URL=$(get_download_url "$OS" "$ARCH")
+    if [ $? -ne 0 ] || [ -z "$DOWNLOAD_URL" ]; then
+        echo_and_log "ERROR" "Failed to determine appropriate download URL."
         exit 1
-    }
+    fi
 
-    Echo-And-Log "INFO" "Download complete: $filename"
+    echo_and_log "INFO" "Download URL: $DOWNLOAD_URL"
 
-    if (-not (Install-Binary "$env:TEMP\$filename")) {
-        Echo-And-Log "ERROR" "Installation failed."
+    FILENAME=$(basename "$DOWNLOAD_URL")
+    echo_and_log "INFO" "Downloading $FILENAME..."
+
+    if ! download_with_retry "$DOWNLOAD_URL" "$FILENAME"; then
+        echo_and_log "ERROR" "Download failed. Please check your internet connection and try again."
         exit 1
-    }
+    fi
 
-    Echo-And-Log "INFO" "Installation completed successfully."
+    echo_and_log "INFO" "Download complete: $FILENAME"
+
+    if ! install_binary "$FILENAME"; then
+        echo_and_log "ERROR" "Installation failed."
+        exit 1
+    fi
+
+    echo_and_log "INFO" "Installation completed successfully."
 }
 
 # Run the main function
-Main
+main
