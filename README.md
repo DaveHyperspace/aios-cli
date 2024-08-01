@@ -10,6 +10,8 @@ The CLI has a lot of commands, but the basic idea is that it allows you to run y
 
 To install on all platforms you can use our install script (located here in the repo or) available hosted on our download endpoint. These scripts will download the latest release, install any required GPU drivers, and move the binary to somewhere in  your `PATH` so that you can access `aios-cli` globally. You can learn more about how the script works [here](/scripts/README.md).
 
+While the script is the recommended way to install, you can also download the binaries directly from the releases section of this repository.
+
 ### Linux
 
 ```shell
@@ -150,6 +152,12 @@ Prints the help message or the help of the given subcommand(s).
 Usage:
 - `aios-cli help`: Prints general help
 - `aios-cli help [COMMAND]`: Prints help for a specific command
+
+## Updates
+
+When you run `start` the CLI will be constantly polling and checking for updates as this software is in an early version and it is likely that there are breaking changes made at the network level that can make your node obsolete. These checks for updates and whether they were successful or not will show up in your logs for troubleshooting if you think something has gone wrong in the process.
+
+To ensure that you are on the latest version or update while not in a started state, just run the `version` command while connected to the internet and the CLI will automatically check and update itself. If for some reason that's not working you can re-run the installation steps and the script will install the latest version.
 
 ## Troubleshooting
 
