@@ -328,10 +328,6 @@ main() {
         exit 1
     fi
 
-    if is_wsl; then
-        echo_and_log "WARN" "Running in WSL environment. Some features may be limited."
-        echo_and_log "WARN" "CUDA installation may not work as expected in WSL."
-    fi
 
     echo_and_log "INFO" "Fetching latest release..."
     RELEASE_DATA=$(fetch_latest_release)
@@ -354,6 +350,8 @@ main() {
             ;;
         linux)
             if is_wsl; then
+                echo_and_log "WARN" "Running in WSL environment. Some features may be limited."
+                echo_and_log "WARN" "CUDA installation may not work as expected in WSL."
                 log "INFO" "WSL environment detected."
                 if check_nvidia_gpu; then
                     log "INFO" "NVIDIA GPU detected in WSL."
