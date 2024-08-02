@@ -14,22 +14,52 @@ CUDA_PATH_VERSION="12.5"
 LOG_FILE="/tmp/hyperspace_install.log"
 VERBOSE=false
 
+# Color definitions
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+
 log() {
     local level="$1"
     local message="$2"
     local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
     echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
-    if [ "$VERBOSE" = true ] || [ "$level" = "ERROR" ]; then
-        echo "[$level] $message"
+    if [ "$VERBOSE" = true ]; then
+        echo_and_log "$level" "$message"
     fi
 }
 
 echo_and_log() {
     local level="$1"
     local message="$2"
-    echo "$message"
-    log "$level" "$message"
+    local color_start=""
+    case $level in
+        "ERROR") color_start="${RED}" ;;
+        "SUCCESS") color_start="${GREEN}" ;;
+        "INFO") color_start="${BLUE}" ;;
+        "WARN") color_start="${YELLOW}" ;;
+        *) color_start="" ;;
+    esac
+    local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+    echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
+
+    # Replace color tags in the message
+    message="${message//\{\{ERROR\}\}/${RED}}"
+    message="${message//\{\{SUCCESS\}\}/${GREEN}}"
+    message="${message//\{\{INFO\}\}/${BLUE}}"
+    message="${message//\{\{WARN\}\}/${YELLOW}}"
+    message="${message//\{\{NC\}\}/${NC}}"
+
+    if [ "$VERBOSE" = true ]; then
+        echo -e "${color_start}[$level]${NC} ${color_start}${message}${NC}"
+    else
+        echo -e "${color_start}${message}${NC}"
+    fi
 }
+
 
 # Parse command line arguments
 while [[ "$#" -gt 0 ]]; do
@@ -100,7 +130,7 @@ install_cuda() {
     echo_and_log "INFO" "Installing CUDA $CUDA_VERSION..."
 
     if [ ! -f /etc/os-release ]; then
-        echo "Error: Cannot determine OS version. Aborting CUDA installation."
+        echo "ERROR" "Error: Cannot determine OS version. Aborting CUDA installation."
         return 1
     fi
 
@@ -222,7 +252,6 @@ download_with_retry() {
     local max_attempts=3
     local attempt=1
 
-    echo_and_log "INFO" "Downloading $url to $output..."
     trap 'echo_and_log "ERROR" "Download interrupted. Cleaning up..."; rm -f "$output"; exit 1' INT TERM
 
     while [ $attempt -le $max_attempts ]; do
@@ -256,10 +285,10 @@ install_binary() {
         return 1
     fi
 
-    echo_and_log "INFO" "Moving binary to $install_dir"
-    echo_and_log "INFO" "You may be prompted for your sudo password to move the binary to $install_dir."
+    echo_and_log "WARN" "Moving binary to $install_dir"
+    echo_and_log "WARN" "You may be prompted for your sudo password to move the binary to $install_dir."
     if sudo mv "$binary_path" "$install_dir/$binary_name"; then
-        echo_and_log "INFO" "Binary installed successfully. You can now run it by typing '$binary_name'."
+        echo_and_log "INFO" "Binary installed successfully. You can now run it by typing {{NC}}'$binary_name'{{NC}}"
     else
         echo_and_log "ERROR" "Failed to move the binary to $install_dir. Please check your permissions."
         return 1
@@ -287,7 +316,7 @@ is_wsl() {
 
 # Main function to orchestrate the installation process
 main() {
-    echo_and_log "INFO" "Starting aiOs cli installation..."
+    echo_and_log "LOG" "Starting aiOs cli installation..."
 
     local OS ARCH RELEASE_DATA VERSION DOWNLOAD_URL FILENAME
 
@@ -316,7 +345,7 @@ main() {
         echo_and_log "ERROR" "Failed to parse version from release data."
         exit 1
     fi
-    echo_and_log "INFO" "Latest version: $VERSION"
+    echo_and_log "LOG" "Latest version: {{INFO}}$VERSION{{NC}}"
 
     case $OS in
         macos)
@@ -392,14 +421,14 @@ main() {
         exit 1
     fi
 
-    echo_and_log "INFO" "Download complete"
+    echo_and_log "SUCCESS" "Download complete"
 
     if ! install_binary "$FILENAME"; then
         echo_and_log "ERROR" "Installation failed."
         exit 1
     fi
 
-    echo_and_log "INFO" "Installation completed successfully."
+    echo_and_log "SUCCESS" "Installation completed successfully."
 }
 
 # Run the main function
