@@ -60,7 +60,6 @@ detect_mac_arch() {
 }
 
 # Check for NVIDIA GPU presence
-
 check_nvidia_gpu() {
     if is_wsl; then
         if command -v nvidia-smi &> /dev/null; then
@@ -74,7 +73,6 @@ check_nvidia_gpu() {
     fi
 }
 
-
 # Check if CUDA is installed
 check_cuda() {
     command -v nvcc &> /dev/null
@@ -87,16 +85,15 @@ handle_cuda_wsl() {
         log "INFO" "Using CUDA from Windows host system."
         return 0
     else
-        log "WARN" "CUDA is not detected in this WSL environment."
-        log "INFO" "To use CUDA in WSL2, please ensure:"
-        log "INFO" "1. You have installed the NVIDIA CUDA on WSL driver on your Windows host."
-        log "INFO" "2. You are using WSL2 (not WSL1)."
-        log "INFO" "3. Your Windows host has CUDA-capable NVIDIA GPU and up-to-date drivers."
-        log "INFO" "For more information, visit: https://docs.nvidia.com/cuda/wsl-user-guide/index.html"
+        echo_and_log "WARN" "CUDA is not detected in this WSL environment."
+        echo_and_log "INFO" "To use CUDA in WSL2, please ensure:"
+        echo_and_log "INFO" "1. You have installed the NVIDIA CUDA on WSL driver on your Windows host."
+        echo_and_log "INFO" "2. You are using WSL2 (not WSL1)."
+        echo_and_log "INFO" "3. Your Windows host has CUDA-capable NVIDIA GPU and up-to-date drivers."
+        echo_and_log "INFO" "For more information, visit: https://docs.nvidia.com/cuda/wsl-user-guide/index.html"
         return 1
     fi
 }
-
 
 # Install CUDA on supported Linux distributions
 install_cuda() {
@@ -113,7 +110,6 @@ install_cuda() {
 
     # Temporary file to store downloaded .deb
     local temp_deb="cuda_installer.deb"
-
 
     case $OS in
         "ubuntu"|"pop")
@@ -187,8 +183,6 @@ get_download_url() {
     local os=$1
     local arch=$2
 
-    echo "$arch" >&2
-
     local url=""
     case $os in
         macos)
@@ -212,7 +206,7 @@ get_download_url() {
     esac
 
     if [ -n "$url" ]; then
-        echo_and_log "DEBUG" "Download URL determined: $url" >&2
+        log "DEBUG" "Download URL: $url" >&2
         echo "$url"
         return 0
     else
@@ -233,7 +227,6 @@ download_with_retry() {
 
     while [ $attempt -le $max_attempts ]; do
         if curl -L --fail -o "$output" "$url"; then
-            echo_and_log "INFO" "Download successful: $output"
             trap - INT TERM
             return 0
         else
@@ -264,6 +257,7 @@ install_binary() {
     fi
 
     echo_and_log "INFO" "Moving binary to $install_dir"
+    echo_and_log "INFO" "You may be prompted for your sudo password to move the binary to $install_dir."
     if sudo mv "$binary_path" "$install_dir/$binary_name"; then
         echo_and_log "INFO" "Binary installed successfully. You can now run it by typing '$binary_name'."
     else
@@ -298,7 +292,7 @@ main() {
     local OS ARCH RELEASE_DATA VERSION DOWNLOAD_URL FILENAME
 
     OS=$(detect_os)
-    echo_and_log "INFO" "Detected OS: $OS"
+    log "INFO" "Detected OS: $OS"
 
     if [ "$OS" == "unknown" ]; then
         echo_and_log "ERROR" "Unsupported operating system."
@@ -331,26 +325,26 @@ main() {
             ;;
         linux)
             if is_wsl; then
-                echo_and_log "INFO" "WSL environment detected."
+                log "INFO" "WSL environment detected."
                 if check_nvidia_gpu; then
-                    echo_and_log "INFO" "NVIDIA GPU detected in WSL."
+                    log "INFO" "NVIDIA GPU detected in WSL."
                     if check_cuda; then
                         echo_and_log "INFO" "CUDA is available in this WSL environment."
                         ARCH="cuda"
                     else
                         echo_and_log "WARN" "CUDA is not detected in this WSL environment."
-                        echo_and_log "INFO" "Proceeding with non-CUDA version."
+                        echo_and_log "INFO" "Proceeding with cpu version."
                         ARCH="nocuda"
                     fi
                 else
-                    echo_and_log "INFO" "No NVIDIA GPU detected in WSL. Proceeding with non-CUDA version."
+                    echo_and_log "INFO" "No NVIDIA GPU detected in WSL. Proceeding with cpu version."
                     ARCH="nocuda"
                 fi
             else
                 if check_nvidia_gpu; then
-                    echo_and_log "INFO" "NVIDIA GPU detected."
+                    log "INFO" "NVIDIA GPU detected."
                     if check_cuda; then
-                        echo_and_log "INFO" "CUDA is already installed."
+                        log "INFO" "CUDA is already installed."
                         ARCH="cuda"
                     else
                         echo_and_log "INFO" "CUDA is not installed."
@@ -372,7 +366,7 @@ main() {
                         fi
                     fi
                 else
-                    echo_and_log "INFO" "No NVIDIA GPU detected. Proceeding with non-CUDA version."
+                    echo_and_log "INFO" "No NVIDIA GPU detected. Proceeding with cpu version."
                     ARCH="nocuda"
                 fi
             fi
@@ -389,7 +383,6 @@ main() {
         exit 1
     fi
 
-    echo_and_log "INFO" "Download URL: $DOWNLOAD_URL"
 
     FILENAME=$(basename "$DOWNLOAD_URL")
     echo_and_log "INFO" "Downloading $FILENAME..."
@@ -399,7 +392,7 @@ main() {
         exit 1
     fi
 
-    echo_and_log "INFO" "Download complete: $FILENAME"
+    echo_and_log "INFO" "Download complete"
 
     if ! install_binary "$FILENAME"; then
         echo_and_log "ERROR" "Installation failed."
