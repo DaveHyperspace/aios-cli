@@ -8,25 +8,28 @@ $CUDA_PATH_VERSION = "12.5"
 $LOG_FILE = "$env:TEMP\hyperspace_install.log"
 $VERBOSE = $false
 
-function Log {
+param([switch]$Elevated)
+
+function log {
     param (
         [string]$level,
         [string]$message
     )
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     "$timestamp [$level] $message" | Out-File -Append -FilePath $LOG_FILE
-    if ($VERBOSE -or $level -eq "ERROR") {
+    if ($VERBOSE) {
         Write-Host "[$level] $message"
     }
 }
 
-function Echo-And-Log {
+function echo_and_log {
     param (
         [string]$level,
         [string]$message
     )
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    "$timestamp [$level] $message" | Out-File -Append -FilePath $LOG_FILE
     Write-Host $message
-    Log $level $message
 }
 
 # Parse command line arguments
@@ -34,6 +37,21 @@ $args | ForEach-Object {
     switch ($_) {
         {$_ -in "-v", "--verbose"} { $VERBOSE = $true }
     }
+}
+
+# Function to check and request admin privileges
+function Request-AdminPrivileges {
+    if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+        if ($elevated) {
+            echo_and_log "ERROR" "Failed to elevate privileges. Please run this script as an administrator."
+            exit 1
+        } else {
+            echo_and_log "WARN" "This script requires administrator privileges. Attempting to elevate..."
+            Start-Process powershell.exe -Verb RunAs -ArgumentList ("-NoProfile -ExecutionPolicy Bypass -File `"{0}`" -Elevated" -f ($myinvocation.MyCommand.Definition))
+        }
+        exit
+    }
+    echo_and_log "INFO" "Running with administrator privileges."
 }
 
 function Detect-WindowsVersion {
@@ -64,20 +82,20 @@ function Install-CUDA {
     $windowsVersion = Detect-WindowsVersion
     $cudaUrl = "https://developer.download.nvidia.com/compute/cuda/$CUDA_VERSION/local_installers/cuda_${CUDA_VERSION}_555.85_windows.exe"
 
-    Echo-And-Log "INFO" "Downloading CUDA installer..."
+    echo_and_log "INFO" "Downloading CUDA installer..."
     $installerPath = "$env:TEMP\cuda_installer.exe"
     Invoke-WebRequest -Uri $cudaUrl -OutFile $installerPath
 
-    Echo-And-Log "INFO" "Installing CUDA..."
+    echo_and_log "INFO" "Installing CUDA..."
     Start-Process -FilePath $installerPath -ArgumentList "/s" -Wait
 
     # Clean up
     Remove-Item $installerPath
 
-    Echo-And-Log "INFO" "CUDA $CUDA_VERSION installation complete."
+    echo_and_log "INFO" "CUDA $CUDA_VERSION installation complete."
 
     if (-not (Check-CUDA)) {
-        Echo-And-Log "ERROR" "CUDA installation validation failed. Please check your installation."
+        echo_and_log "ERROR" "CUDA installation validation failed. Please check your installation."
         return $false
     }
 
@@ -89,7 +107,6 @@ function Install-CUDA {
 
     return $true
 }
-
 function Fetch-LatestRelease {
     $url = "https://api.github.com/repos/$REPO_OWNER/$REPO_SLUG/releases/latest"
     $response = Invoke-RestMethod -Uri $url
@@ -118,16 +135,16 @@ function Download-WithRetry {
     while ($attempt -le $maxAttempts) {
         try {
             Invoke-WebRequest -Uri $url -OutFile $output
-            Echo-And-Log "INFO" "Download successful: $output"
+            echo_and_log "INFO" "Download successful: $output"
             return $true
         } catch {
-            Echo-And-Log "WARN" "Attempt $attempt failed. Retrying in 5 seconds..."
+            echo_and_log "WARN" "Attempt $attempt failed. Retrying in 5 seconds..."
             Start-Sleep -Seconds 5
             $attempt++
         }
     }
 
-    Echo-And-Log "ERROR" "Failed to download after $maxAttempts attempts."
+    echo_and_log "ERROR" "Failed to download after $maxAttempts attempts."
     return $false
 }
 
@@ -137,18 +154,19 @@ function Install-Binary {
     )
     $installDir = "$env:ProgramFiles\AIOS"
 
-    Echo-And-Log "INFO" "Extracting $filename..."
+    echo_and_log "INFO" "Extracting $filename..."
     Expand-Archive -Path $filename -DestinationPath $env:TEMP\aios-temp
 
     $binaryName = "aios-cli.exe"
     $binaryPath = Get-ChildItem -Path $env:TEMP\aios-temp -Recurse -Filter $binaryName | Select-Object -First 1 -ExpandProperty FullName
 
     if (-not $binaryPath) {
-        Echo-And-Log "ERROR" "Binary not found in the extracted files."
+        echo_and_log "ERROR" "Binary not found in the extracted files."
         return $false
     }
 
-    Echo-And-Log "INFO" "Moving binary to $installDir"
+    echo_and_log "WARN" "Moving binary to $installDir"
+    echo_and_log "WARN" "You may be prompted for administrator permissions to move the binary to $installDir."
     if (-not (Test-Path $installDir)) {
         New-Item -ItemType Directory -Path $installDir | Out-Null
     }
@@ -166,84 +184,90 @@ function Install-Binary {
 
     # Validate installation
     if (-not (Get-Command aios-cli -ErrorAction SilentlyContinue)) {
-        Echo-And-Log "ERROR" "Installation validation failed. The 'aios-cli' command is not available in PATH."
+        echo_and_log "ERROR" "Installation validation failed. The 'aios-cli' command is not available in PATH."
         return $false
     }
 
+    echo_and_log "INFO" "Binary installed successfully. You can now run it by typing 'aios-cli'"
     return $true
 }
 
 function Main {
-    Echo-And-Log "INFO" "Starting AIOS CLI installation..."
+    # Check for admin privileges first
+    Request-AdminPrivileges
+
+    echo_and_log "INFO" "Starting AIOS CLI installation..."
 
     $windowsVersion = Detect-WindowsVersion
-    Echo-And-Log "INFO" "Detected Windows version: $windowsVersion"
+    log "INFO" "Detected Windows version: $windowsVersion"
 
     if ($windowsVersion -eq "Unknown") {
-        Echo-And-Log "ERROR" "Unsupported Windows version."
+        echo_and_log "ERROR" "Unsupported Windows version."
         exit 1
     }
 
-    Echo-And-Log "INFO" "Fetching latest release..."
+    echo_and_log "INFO" "Fetching latest release..."
     $releaseData = Fetch-LatestRelease
     if (-not $releaseData) {
-        Echo-And-Log "ERROR" "Failed to fetch release data."
+        echo_and_log "ERROR" "Failed to fetch release data."
         exit 1
     }
 
     $version = $releaseData.tag_name
-    Echo-And-Log "INFO" "Latest version: $version"
+    echo_and_log "INFO" "Latest version: $version"
 
     $hasCuda = $false
     if (Check-NvidiaGPU) {
-        Echo-And-Log "INFO" "NVIDIA GPU detected."
+        log "INFO" "NVIDIA GPU detected."
         if (-not (Check-CUDA)) {
-            Echo-And-Log "INFO" "CUDA is not installed."
+            echo_and_log "INFO" "CUDA is not installed."
             $installCuda = Read-Host "Do you want to install CUDA drivers? (y/n)"
             if ($installCuda -eq "y") {
                 if (Install-CUDA) {
-                    Echo-And-Log "INFO" "CUDA installation completed successfully."
+                    echo_and_log "INFO" "CUDA installation completed successfully."
                     $hasCuda = $true
                 } else {
-                    Echo-And-Log "ERROR" "CUDA installation failed."
-                    Echo-And-Log "INFO" "Proceeding with non-CUDA version."
+                    echo_and_log "ERROR" "CUDA installation failed."
+                    echo_and_log "INFO" "Proceeding with non-CUDA version."
                 }
             } else {
-                Echo-And-Log "INFO" "Proceeding without CUDA."
+                echo_and_log "INFO" "Proceeding without CUDA."
             }
         } else {
-            Echo-And-Log "INFO" "CUDA is already installed."
+            log "INFO" "CUDA is already installed."
             $hasCuda = $true
         }
     } else {
-        Echo-And-Log "INFO" "No NVIDIA GPU detected. Proceeding without CUDA."
+        log "INFO" "No NVIDIA GPU detected. Proceeding without CUDA."
     }
 
     $downloadUrl = Get-DownloadUrl -hasCuda $hasCuda
     if (-not $downloadUrl) {
-        Echo-And-Log "ERROR" "Failed to determine appropriate download URL."
+        echo_and_log "ERROR" "Failed to determine appropriate download URL."
         exit 1
     }
 
-    Echo-And-Log "INFO" "Download URL: $downloadUrl"
+    log "INFO" "Download URL: $downloadUrl"
 
     $filename = Split-Path -Leaf $downloadUrl
-    Echo-And-Log "INFO" "Downloading $filename..."
+    echo_and_log "INFO" "Downloading $filename..."
 
     if (-not (Download-WithRetry $downloadUrl "$env:TEMP\$filename")) {
-        Echo-And-Log "ERROR" "Download failed. Please check your internet connection and try again."
+        echo_and_log "ERROR" "Download failed. Please check your internet connection and try again."
         exit 1
     }
 
-    Echo-And-Log "INFO" "Download complete: $filename"
+    echo_and_log "INFO" "Download complete"
 
     if (-not (Install-Binary "$env:TEMP\$filename")) {
-        Echo-And-Log "ERROR" "Installation failed."
+        echo_and_log "ERROR" "Installation failed."
         exit 1
     }
 
-    Echo-And-Log "INFO" "Installation completed successfully."
+    echo_and_log "SUCCESS" "Installation completed successfully."
 }
 
 # Run the main function
-Main
+if (-NOT $elevated) {
+    Main
+}
