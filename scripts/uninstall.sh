@@ -26,7 +26,7 @@ remove_binary() {
 
 # Main uninstall function
 main() {
-    echo "Starting AIOS CLI uninstallation..."
+    echo "Starting aiOs cli uninstallation..."
 
     if remove_binary; then
         echo "AIOS CLI binary uninstalled successfully."

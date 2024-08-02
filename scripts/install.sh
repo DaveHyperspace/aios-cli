@@ -287,7 +287,7 @@ is_wsl() {
 
 # Main function to orchestrate the installation process
 main() {
-    echo_and_log "INFO" "Starting AIOS CLI installation..."
+    echo_and_log "INFO" "Starting aiOs cli installation..."
 
     local OS ARCH RELEASE_DATA VERSION DOWNLOAD_URL FILENAME
 
