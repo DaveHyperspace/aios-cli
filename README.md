@@ -26,6 +26,8 @@ curl https://download.hyper.space/api/install | sh
 
 ### Windows
 
+You must be running in an Administrator PowerShell for both installation and uninstallation scripts to work on Windows
+
 ```shell
 # If you have a real version of `curl` (i.e. something that returns a valid version when you do `curl --version`)
 curl https://download.hyper.space/api/install?platform=windows | powershell -
@@ -33,6 +35,36 @@ curl https://download.hyper.space/api/install?platform=windows | powershell -
 (Invoke-WebRequest "https://download.hyper.space/install?platform=windows").Content | powershell -
 ```
 
+## Uninstallation
+
+Uninstallation is similar but just change the endpoint to `/uninstall`
+
+### Linux
+
+```shell
+curl https://download.hyper.space/api/uninstall | bash
+```
+
+### Mac
+
+```shell
+curl https://download.hyper.space/api/uninstall | sh
+```
+
+### Windows
+
+```shell
+(Invoke-WebRequest "https://download.hyper.space/uninstall?platform=windows").Content | powershell -
+```
+
+## Docker
+
+There are 2 pre-built docker images available, one on CPU that will install and serves Mistral 7B and one that requires an Nvidia GPU that installs and serves Llama3.
+
+- [`cpu-mistral-7b`](https://hub.docker.com/repository/docker/kartikhyper/aios)
+- [`nvidia-llama-3`](https://hub.docker.com/repository/docker/kartikhyper/aios-nvidia)
+
+Make sure that the environment you run the Nvidia image in has `nvidia-container-toolkit` installed and selected as the default runtime.
 
 ## Usage
 
